@@ -26,6 +26,7 @@ from models import (
     IncomeStatementRow, IncomeStatementSummary,
     BalanceSheetRow, BalanceSheetSummary,
     CashFlowRow, CashFlowSummary,
+    Tenant, TenantCreate,
 )
 
 router = APIRouter()
@@ -60,6 +61,36 @@ def http_error(status: int, detail: str):
     raise HTTPException(status_code=status, detail=detail)
 
 
+# ─── TENANTS ──────────────────────────────────────────────────────────────────
+
+@router.post("/tenants", response_model=Tenant, tags=["Tenants"])
+async def create_tenant(payload: TenantCreate, db=Depends(get_db)):
+    """Create a new tenant. This is the first step for any new user."""
+    import json
+    row = await db.fetchrow("""
+        INSERT INTO tenants (name, base_currency, settings)
+        VALUES ($1, $2, $3)
+        RETURNING *
+    """, payload.name, payload.base_currency, json.dumps(payload.settings))
+    return Tenant(**row_to_dict(row))
+
+
+@router.get("/tenants/{tenant_id}", response_model=Tenant, tags=["Tenants"])
+async def get_tenant(tenant_id: UUID, db=Depends(get_db)):
+    """Get tenant details by ID."""
+    row = await db.fetchrow("SELECT * FROM tenants WHERE id = $1", tenant_id)
+    if not row:
+        http_error(404, "Tenant not found.")
+    return Tenant(**row_to_dict(row))
+
+
+@router.get("/tenants", response_model=List[Tenant], tags=["Tenants"])
+async def list_tenants(db=Depends(get_db)):
+    """List all tenants (for admin purposes)."""
+    rows = await db.fetch("SELECT * FROM tenants WHERE is_active = true ORDER BY created_at DESC")
+    return [Tenant(**row_to_dict(r)) for r in rows]
+
+
 # ─── ACCOUNTS ─────────────────────────────────────────────────────────────────
 
 @router.post("/accounts", response_model=Account, tags=["Accounts"])
@@ -75,6 +106,8 @@ async def create_account(payload: AccountCreate, db=Depends(get_db)):
         return Account(**row_to_dict(row))
     except asyncpg.UniqueViolationError:
         http_error(409, f"Account code '{payload.code}' already exists for this tenant.")
+    except asyncpg.ForeignKeyViolationError as e:
+        http_error(400, f"Invalid reference: {str(e).split('DETAIL:')[1].strip() if 'DETAIL:' in str(e) else 'Tenant not found.'}")
 
 
 @router.get("/accounts", response_model=List[Account], tags=["Accounts"])
