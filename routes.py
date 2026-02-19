@@ -9,7 +9,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import JSONResponse
 
 from db import get_db
@@ -59,6 +59,21 @@ def generate_txn_number(prefix: str = "TXN") -> str:
 
 def http_error(status: int, detail: str):
     raise HTTPException(status_code=status, detail=detail)
+
+
+# ─── Tenant Header Dependency ─────────────────────────────────────────────────
+
+async def get_tenant_id(x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID")) -> UUID:
+    """Extract tenant ID from X-Tenant-ID header."""
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header is required")
+    try:
+        return UUID(x_tenant_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid X-Tenant-ID format")
+
+
+# ─── TENANTS ──────────────────────────────────────────────────────────────────
 
 
 # ─── TENANTS ──────────────────────────────────────────────────────────────────
@@ -111,12 +126,18 @@ async def create_account(payload: AccountCreate, db=Depends(get_db)):
 
 
 @router.get("/accounts", response_model=List[Account], tags=["Accounts"])
-async def list_accounts(tenant_id: UUID, db=Depends(get_db)):
+async def list_accounts(tenant_id: UUID = Depends(get_tenant_id), type: Optional[str] = Query(None), db=Depends(get_db)):
     """List all accounts for a tenant."""
-    rows = await db.fetch(
-        "SELECT * FROM accounts WHERE tenant_id = $1 AND is_active = true ORDER BY code",
-        tenant_id
-    )
+    query = "SELECT * FROM accounts WHERE tenant_id = $1 AND is_active = true"
+    params = [tenant_id]
+    
+    if type:
+        query += " AND type = $2"
+        params.append(type)
+    
+    query += " ORDER BY code"
+    
+    rows = await db.fetch(query, *params)
     return [Account(**row_to_dict(r)) for r in rows]
 
 
@@ -147,7 +168,7 @@ async def create_party(payload: PartyCreate, db=Depends(get_db)):
 
 @router.get("/parties", response_model=List[Party], tags=["Parties"])
 async def list_parties(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     type: Optional[str] = None,
     db=Depends(get_db)
 ):
@@ -284,7 +305,7 @@ async def create_and_post_transaction(payload: TransactionCreate, db=Depends(get
 
 @router.get("/transactions", response_model=List[TransactionResponse], tags=["Transactions"])
 async def list_transactions(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     posted_only: bool = True,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
@@ -357,7 +378,7 @@ async def reverse_transaction(
 
 @router.get("/ledger", tags=["Ledger"])
 async def browse_ledger(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     account_id: Optional[UUID] = None,
     party_id: Optional[UUID] = None,
     inventory_item_id: Optional[UUID] = None,
@@ -509,7 +530,7 @@ async def _get_transaction_full(transaction_id: UUID, db) -> TransactionResponse
 
 @router.get("/reports/income-statement", response_model=List[IncomeStatementRow], tags=["Reports"])
 async def income_statement(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db=Depends(get_db)
@@ -557,7 +578,7 @@ async def income_statement(
 
 @router.get("/reports/income-statement/summary", response_model=IncomeStatementSummary, tags=["Reports"])
 async def income_statement_summary(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db=Depends(get_db)
@@ -617,7 +638,7 @@ async def income_statement_summary(
 
 @router.get("/reports/balance-sheet", response_model=List[BalanceSheetRow], tags=["Reports"])
 async def balance_sheet(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     date_to: Optional[date] = None,
     db=Depends(get_db)
 ):
@@ -659,7 +680,7 @@ async def balance_sheet(
 
 @router.get("/reports/balance-sheet/summary", response_model=BalanceSheetSummary, tags=["Reports"])
 async def balance_sheet_summary(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     date_to: Optional[date] = None,
     db=Depends(get_db)
 ):
@@ -728,7 +749,7 @@ async def balance_sheet_summary(
 
 @router.get("/reports/cash-flow", response_model=List[CashFlowRow], tags=["Reports"])
 async def cash_flow(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db=Depends(get_db)
@@ -779,7 +800,7 @@ async def cash_flow(
 
 @router.get("/reports/cash-flow/summary", response_model=CashFlowSummary, tags=["Reports"])
 async def cash_flow_summary(
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db=Depends(get_db)
