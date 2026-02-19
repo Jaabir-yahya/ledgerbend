@@ -429,6 +429,76 @@ JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
 GROUP BY je.tenant_id, je.currency_code;
 
 -- =====================================================
+-- FINANCIAL STATEMENTS VIEWS
+-- =====================================================
+
+-- Income Statement (Profit & Loss): Revenue - Expenses for a period
+-- Supports date_from and date_to filtering
+CREATE VIEW income_statement AS
+SELECT
+    je.tenant_id,
+    a.type AS account_type,
+    a.code AS account_code,
+    a.name AS account_name,
+    COALESCE(SUM(je.debit_amount), 0) AS total_debits,
+    COALESCE(SUM(je.credit_amount), 0) AS total_credits,
+    CASE a.type
+        WHEN 'income' THEN COALESCE(SUM(je.credit_amount), 0) - COALESCE(SUM(je.debit_amount), 0)
+        WHEN 'expense' THEN COALESCE(SUM(je.debit_amount), 0) - COALESCE(SUM(je.credit_amount), 0)
+        ELSE 0
+    END AS net_amount
+FROM journal_entries je
+JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+JOIN accounts a ON a.id = je.account_id
+WHERE a.type IN ('income', 'expense')
+GROUP BY je.tenant_id, a.type, a.code, a.name;
+
+-- Balance Sheet: Assets = Liabilities + Equity at a point in time
+-- For any date, shows balances as of that date
+CREATE VIEW balance_sheet AS
+SELECT
+    je.tenant_id,
+    a.type AS account_type,
+    a.code AS account_code,
+    a.name AS account_name,
+    a.normal_balance,
+    CASE a.normal_balance
+        WHEN 'debit' THEN COALESCE(SUM(je.debit_amount), 0) - COALESCE(SUM(je.credit_amount), 0)
+        WHEN 'credit' THEN COALESCE(SUM(je.credit_amount), 0) - COALESCE(SUM(je.debit_amount), 0)
+    END AS balance
+FROM journal_entries je
+JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+JOIN accounts a ON a.id = je.account_id
+WHERE a.type IN ('asset', 'liability', 'equity')
+GROUP BY je.tenant_id, a.type, a.code, a.name, a.normal_balance;
+
+-- Cash Flow Statement: Cash movements categorized
+-- Operating: All regular business transactions through cash/bank accounts
+-- Investing: Asset purchases/sales
+-- Financing: Loans, owner capital
+CREATE VIEW cash_flow_statement AS
+SELECT
+    je.tenant_id,
+    t.date,
+    a.type AS account_type,
+    a.code AS account_code,
+    a.name AS account_name,
+    COALESCE(SUM(je.debit_amount), 0) AS total_debits,
+    COALESCE(SUM(je.credit_amount), 0) AS total_credits,
+    CASE
+        WHEN a.type = 'asset' AND a.code IN ('1000', '1010', '1020', '1030', '1040', '1050') THEN 'cash_equivalent'
+        WHEN a.type = 'income' AND a.code NOT IN ('4100') THEN 'operating'
+        WHEN a.type = 'expense' AND a.code NOT IN ('5000') THEN 'operating'
+        WHEN a.code = '5000' THEN 'cogs'
+        WHEN a.code = '4100' THEN 'forex'
+        ELSE 'other'
+    END AS flow_category
+FROM journal_entries je
+JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+JOIN accounts a ON a.id = je.account_id
+GROUP BY je.tenant_id, t.date, a.type, a.code, a.name;
+
+-- =====================================================
 -- SEED: DEFAULT TENANT + CHART OF ACCOUNTS
 -- Run once to bootstrap the system
 -- =====================================================

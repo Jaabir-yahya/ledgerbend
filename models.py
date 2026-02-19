@@ -323,3 +323,73 @@ class CurrencyExposure(BaseModel):
 class MessageResponse(BaseModel):
     message: str
     id: Optional[UUID] = None
+
+
+# =====================================================
+# FINANCIAL STATEMENT RESPONSE MODELS
+# =====================================================
+
+class IncomeStatementRow(BaseModel):
+    tenant_id: UUID
+    account_type: str
+    account_code: str
+    account_name: str
+    total_debits: Decimal
+    total_credits: Decimal
+    net_amount: Decimal
+
+    model_config = {"from_attributes": True}
+
+
+class IncomeStatementSummary(BaseModel):
+    tenant_id: UUID
+    total_income: Decimal
+    total_expenses: Decimal
+    net_profit: Decimal
+    profit_margin: Decimal
+    period_from: Optional[date] = None
+    period_to: Optional[date] = None
+    is_profitable: bool
+
+
+class BalanceSheetRow(BaseModel):
+    tenant_id: UUID
+    account_type: str
+    account_code: str
+    account_name: str
+    normal_balance: str
+    balance: Decimal
+
+    model_config = {"from_attributes": True}
+
+
+class BalanceSheetSummary(BaseModel):
+    tenant_id: UUID
+    total_assets: Decimal
+    total_liabilities: Decimal
+    total_equity: Decimal
+    is_balanced: bool
+    as_of_date: Optional[date] = None
+
+
+class CashFlowRow(BaseModel):
+    tenant_id: UUID
+    date: Optional[date] = None
+    account_type: str
+    account_code: str
+    account_name: str
+    total_debits: Decimal
+    total_credits: Decimal
+    flow_category: str
+
+    model_config = {"from_attributes": True}
+
+
+class CashFlowSummary(BaseModel):
+    tenant_id: UUID
+    cash_from_operating: Decimal
+    cash_from_investing: Decimal
+    cash_from_financing: Decimal
+    net_cash_change: Decimal
+    period_from: Optional[date] = None
+    period_to: Optional[date] = None

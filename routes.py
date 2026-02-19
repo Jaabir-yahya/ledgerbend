@@ -23,6 +23,9 @@ from models import (
     JournalFilter,
     TrialBalanceRow, PartyBalanceRow, InventoryPosition, CurrencyExposure,
     MessageResponse,
+    IncomeStatementRow, IncomeStatementSummary,
+    BalanceSheetRow, BalanceSheetSummary,
+    CashFlowRow, CashFlowSummary,
 )
 
 router = APIRouter()
@@ -460,3 +463,345 @@ async def _get_transaction_full(transaction_id: UUID, db) -> TransactionResponse
     txn_data = row_to_dict(txn_row)
     txn_data["entries"] = [row_to_dict(r) for r in entry_rows]
     return TransactionResponse(**txn_data)
+
+
+# =====================================================
+# FINANCIAL STATEMENTS
+# =====================================================
+
+@router.get("/reports/income-statement", response_model=List[IncomeStatementRow], tags=["Reports"])
+async def income_statement(
+    tenant_id: UUID,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db=Depends(get_db)
+):
+    """
+    Income Statement (Profit & Loss): Revenue - Expenses for a period.
+    Without date filters, shows all-time. With filters, shows for that period.
+    """
+    conditions = ["je.tenant_id = $1", "a.type IN ('income', 'expense')"]
+    params = [tenant_id]
+
+    if date_from:
+        params.append(date_from)
+        conditions.append(f"t.date >= ${len(params)}")
+    if date_to:
+        params.append(date_to)
+        conditions.append(f"t.date <= ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            je.tenant_id,
+            a.type AS account_type,
+            a.code AS account_code,
+            a.name AS account_name,
+            COALESCE(SUM(je.debit_amount), 0) AS total_debits,
+            COALESCE(SUM(je.credit_amount), 0) AS total_credits,
+            CASE a.type
+                WHEN 'income' THEN COALESCE(SUM(je.credit_amount), 0) - COALESCE(SUM(je.debit_amount), 0)
+                WHEN 'expense' THEN COALESCE(SUM(je.debit_amount), 0) - COALESCE(SUM(je.credit_amount), 0)
+                ELSE 0
+            END AS net_amount
+        FROM journal_entries je
+        JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+        JOIN accounts a ON a.id = je.account_id
+        WHERE {where}
+        GROUP BY je.tenant_id, a.type, a.code, a.name
+        ORDER BY a.type, a.code
+    """
+
+    rows = await db.fetch(query, *params)
+    return [IncomeStatementRow(**row_to_dict(r)) for r in rows]
+
+
+@router.get("/reports/income-statement/summary", response_model=IncomeStatementSummary, tags=["Reports"])
+async def income_statement_summary(
+    tenant_id: UUID,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db=Depends(get_db)
+):
+    """
+    Summary: Total Income, Total Expenses, Net Profit.
+    """
+    conditions = ["je.tenant_id = $1", "a.type IN ('income', 'expense')"]
+    params = [tenant_id]
+
+    if date_from:
+        params.append(date_from)
+        conditions.append(f"t.date >= ${len(params)}")
+    if date_to:
+        params.append(date_to)
+        conditions.append(f"t.date <= ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            a.type AS account_type,
+            SUM(CASE a.type WHEN 'income' THEN COALESCE(je.credit_amount, 0) - COALESCE(je.debit_amount, 0) ELSE 0 END) AS total_income,
+            SUM(CASE a.type WHEN 'expense' THEN COALESCE(je.debit_amount, 0) - COALESCE(je.credit_amount, 0) ELSE 0 END) AS total_expenses
+        FROM journal_entries je
+        JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+        JOIN accounts a ON a.id = je.account_id
+        WHERE {where}
+        GROUP BY a.type
+    """
+
+    rows = await db.fetch(query, *params)
+
+    total_income = Decimal("0")
+    total_expenses = Decimal("0")
+
+    for row in rows:
+        if row["account_type"] == "income":
+            total_income = Decimal(str(row["total_income"] or 0))
+        elif row["account_type"] == "expense":
+            total_expenses = Decimal(str(row["total_expenses"] or 0))
+
+    net_profit = total_income - total_expenses
+    profit_margin = (net_profit / total_income * 100) if total_income > 0 else Decimal("0")
+
+    return IncomeStatementSummary(
+        tenant_id=tenant_id,
+        total_income=total_income,
+        total_expenses=total_expenses,
+        net_profit=net_profit,
+        profit_margin=profit_margin.quantize(Decimal("0.01")),
+        period_from=date_from,
+        period_to=date_to,
+        is_profitable=net_profit >= 0
+    )
+
+
+@router.get("/reports/balance-sheet", response_model=List[BalanceSheetRow], tags=["Reports"])
+async def balance_sheet(
+    tenant_id: UUID,
+    date_to: Optional[date] = None,
+    db=Depends(get_db)
+):
+    """
+    Balance Sheet: Assets, Liabilities, Equity at a point in time.
+    Without date filter, shows all-time balances.
+    """
+    conditions = ["je.tenant_id = $1", "a.type IN ('asset', 'liability', 'equity')"]
+    params = [tenant_id]
+
+    if date_to:
+        params.append(date_to)
+        conditions.append(f"t.date <= ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            je.tenant_id,
+            a.type AS account_type,
+            a.code AS account_code,
+            a.name AS account_name,
+            a.normal_balance,
+            CASE a.normal_balance
+                WHEN 'debit' THEN COALESCE(SUM(je.debit_amount), 0) - COALESCE(SUM(je.credit_amount), 0)
+                WHEN 'credit' THEN COALESCE(SUM(je.credit_amount), 0) - COALESCE(SUM(je.debit_amount), 0)
+            END AS balance
+        FROM journal_entries je
+        JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+        JOIN accounts a ON a.id = je.account_id
+        WHERE {where}
+        GROUP BY je.tenant_id, a.type, a.code, a.name, a.normal_balance
+        ORDER BY a.type, a.code
+    """
+
+    rows = await db.fetch(query, *params)
+    return [BalanceSheetRow(**row_to_dict(r)) for r in rows]
+
+
+@router.get("/reports/balance-sheet/summary", response_model=BalanceSheetSummary, tags=["Reports"])
+async def balance_sheet_summary(
+    tenant_id: UUID,
+    date_to: Optional[date] = None,
+    db=Depends(get_db)
+):
+    """
+    Summary: Total Assets = Total Liabilities + Total Equity
+    """
+    conditions = ["je.tenant_id = $1", "a.type IN ('asset', 'liability', 'equity')"]
+    params = [tenant_id]
+
+    if date_to:
+        params.append(date_to)
+        conditions.append(f"t.date <= ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            a.type AS account_type,
+            SUM(CASE
+                WHEN a.type = 'asset' AND a.normal_balance = 'debit' THEN COALESCE(je.debit_amount, 0) - COALESCE(je.credit_amount, 0)
+                WHEN a.type = 'asset' AND a.normal_balance = 'credit' THEN COALESCE(je.credit_amount, 0) - COALESCE(je.debit_amount, 0)
+                ELSE 0
+            END) AS total_assets,
+            SUM(CASE
+                WHEN a.type = 'liability' AND a.normal_balance = 'credit' THEN COALESCE(je.credit_amount, 0) - COALESCE(je.debit_amount, 0)
+                WHEN a.type = 'liability' AND a.normal_balance = 'debit' THEN COALESCE(je.debit_amount, 0) - COALESCE(je.credit_amount, 0)
+                ELSE 0
+            END) AS total_liabilities,
+            SUM(CASE
+                WHEN a.type = 'equity' AND a.normal_balance = 'credit' THEN COALESCE(je.credit_amount, 0) - COALESCE(je.debit_amount, 0)
+                WHEN a.type = 'equity' AND a.normal_balance = 'debit' THEN COALESCE(je.debit_amount, 0) - COALESCE(je.credit_amount, 0)
+                ELSE 0
+            END) AS total_equity
+        FROM journal_entries je
+        JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+        JOIN accounts a ON a.id = je.account_id
+        WHERE {where}
+        GROUP BY a.type
+    """
+
+    rows = await db.fetch(query, *params)
+
+    total_assets = Decimal("0")
+    total_liabilities = Decimal("0")
+    total_equity = Decimal("0")
+
+    for row in rows:
+        if row["account_type"] == "asset":
+            total_assets = Decimal(str(row["total_assets"] or 0))
+        elif row["account_type"] == "liability":
+            total_liabilities = Decimal(str(row["total_liabilities"] or 0))
+        elif row["account_type"] == "equity":
+            total_equity = Decimal(str(row["total_equity"] or 0))
+
+    is_balanced = abs((total_liabilities + total_equity) - total_assets) <= Decimal("0.01")
+
+    return BalanceSheetSummary(
+        tenant_id=tenant_id,
+        total_assets=total_assets,
+        total_liabilities=total_liabilities,
+        total_equity=total_equity,
+        is_balanced=is_balanced,
+        as_of_date=date_to
+    )
+
+
+@router.get("/reports/cash-flow", response_model=List[CashFlowRow], tags=["Reports"])
+async def cash_flow(
+    tenant_id: UUID,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db=Depends(get_db)
+):
+    """
+    Cash Flow Statement: Cash movements categorized.
+    """
+    conditions = ["je.tenant_id = $1"]
+    params = [tenant_id]
+
+    if date_from:
+        params.append(date_from)
+        conditions.append(f"t.date >= ${len(params)}")
+    if date_to:
+        params.append(date_to)
+        conditions.append(f"t.date <= ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            je.tenant_id,
+            t.date,
+            a.type AS account_type,
+            a.code AS account_code,
+            a.name AS account_name,
+            COALESCE(SUM(je.debit_amount), 0) AS total_debits,
+            COALESCE(SUM(je.credit_amount), 0) AS total_credits,
+            CASE
+                WHEN a.type = 'asset' AND a.code IN ('1000', '1010', '1020', '1030', '1040', '1050') THEN 'cash_equivalent'
+                WHEN a.type = 'income' AND a.code NOT IN ('4100') THEN 'operating'
+                WHEN a.type = 'expense' AND a.code NOT IN ('5000') THEN 'operating'
+                WHEN a.code = '5000' THEN 'cogs'
+                WHEN a.code = '4100' THEN 'forex'
+                ELSE 'other'
+            END AS flow_category
+        FROM journal_entries je
+        JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+        JOIN accounts a ON a.id = je.account_id
+        WHERE {where}
+        GROUP BY je.tenant_id, t.date, a.type, a.code, a.name
+        ORDER BY t.date DESC, a.code
+    """
+
+    rows = await db.fetch(query, *params)
+    return [CashFlowRow(**row_to_dict(r)) for r in rows]
+
+
+@router.get("/reports/cash-flow/summary", response_model=CashFlowSummary, tags=["Reports"])
+async def cash_flow_summary(
+    tenant_id: UUID,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db=Depends(get_db)
+):
+    """
+    Summary: Net cash from Operating, Investing, Financing activities.
+    """
+    conditions = ["je.tenant_id = $1"]
+    params = [tenant_id]
+
+    if date_from:
+        params.append(date_from)
+        conditions.append(f"t.date >= ${len(params)}")
+    if date_to:
+        params.append(date_to)
+        conditions.append(f"t.date <= ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    query = f"""
+        SELECT
+            CASE
+                WHEN a.type = 'asset' AND a.code IN ('1000', '1010', '1020', '1030', '1040', '1050') THEN 'cash_equivalent'
+                WHEN a.type = 'income' THEN 'operating'
+                WHEN a.type = 'expense' THEN 'operating'
+                ELSE 'other'
+            END AS flow_category,
+            SUM(CASE
+                WHEN a.type = 'income' OR (a.type = 'asset' AND a.code IN ('1000', '1010', '1020', '1030', '1040', '1050') AND je.credit_amount > 0)
+                THEN COALESCE(je.base_amount, 0)
+                ELSE 0
+            END) AS cash_in,
+            SUM(CASE
+                WHEN a.type = 'expense' OR (a.type = 'asset' AND a.code IN ('1000', '1010', '1020', '1030', '1040', '1050') AND je.debit_amount > 0)
+                THEN COALESCE(je.base_amount, 0)
+                ELSE 0
+            END) AS cash_out
+        FROM journal_entries je
+        JOIN transactions t ON t.id = je.transaction_id AND t.is_posted = true
+        JOIN accounts a ON a.id = je.account_id
+        WHERE {where}
+        GROUP BY flow_category
+    """
+
+    rows = await db.fetch(query, *params)
+
+    cash_from_operating = Decimal("0")
+
+    for row in rows:
+        cash_in = Decimal(str(row["cash_in"] or 0))
+        cash_out = Decimal(str(row["cash_out"] or 0))
+        if row["flow_category"] in ("operating", "cash_equivalent"):
+            cash_from_operating += cash_in - cash_out
+
+    return CashFlowSummary(
+        tenant_id=tenant_id,
+        cash_from_operating=cash_from_operating,
+        cash_from_investing=Decimal("0"),
+        cash_from_financing=Decimal("0"),
+        net_cash_change=cash_from_operating,
+        period_from=date_from,
+        period_to=date_to
+    )
