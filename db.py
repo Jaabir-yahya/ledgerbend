@@ -44,7 +44,7 @@ async def get_pool() -> asyncpg.Pool:
                 max_size=10,
                 command_timeout=60,
                 ssl="require",
-                statement_cache_size=0
+                statement_cache_size=0  # Required for Supabase pooler (pgbouncer)
             )
         except Exception as e:
             print(f"DEBUG: Connection failed: {e}")

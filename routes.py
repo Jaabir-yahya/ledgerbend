@@ -426,13 +426,18 @@ async def verify_system_balance(tenant_id: UUID, db=Depends(get_db)):
     """
     The golden rule check: total debits must equal total credits across all
     posted transactions. If this ever returns non-zero, something is very wrong.
-    This is your truth test - run it any time.
+    
+    IMPORTANT: Uses base_amount to handle cross-currency transactions correctly.
+    The truth is always calculated in the tenant's base currency.
     """
     row = await db.fetchrow("""
         SELECT
-            SUM(debit_amount)  AS total_debits,
-            SUM(credit_amount) AS total_credits,
-            ABS(SUM(debit_amount) - SUM(credit_amount)) AS imbalance
+            SUM(base_amount) FILTER (WHERE debit_amount > 0) AS total_debits,
+            SUM(base_amount) FILTER (WHERE credit_amount > 0) AS total_credits,
+            ABS(
+                COALESCE(SUM(base_amount) FILTER (WHERE debit_amount > 0), 0) -
+                COALESCE(SUM(base_amount) FILTER (WHERE credit_amount > 0), 0)
+            ) AS imbalance
         FROM journal_entries je
         JOIN transactions t ON t.id = je.transaction_id
         WHERE je.tenant_id = $1 AND t.is_posted = true

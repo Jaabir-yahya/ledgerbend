@@ -64,13 +64,22 @@ tests/
 | GET  | `/api/v1/transactions` | List transactions |
 | POST | `/api/v1/transactions/{id}/reverse` | Reverse a posted transaction |
 | GET  | `/api/v1/ledger` | Browse entries by any dimension |
+| **Financial Reports** | | |
+| GET  | `/api/v1/reports/verify-balance` | **The truth check** |
 | GET  | `/api/v1/reports/trial-balance` | Full trial balance |
+| GET  | `/api/v1/reports/income-statement` | P&L by account (supports date range) |
+| GET  | `/api/v1/reports/income-statement/summary` | P&L summary (total income, expenses, net profit) |
+| GET  | `/api/v1/reports/balance-sheet` | Assets, Liabilities, Equity (supports date_to) |
+| GET  | `/api/v1/reports/balance-sheet/summary` | Balance Sheet summary (totals + balanced check) |
+| GET  | `/api/v1/reports/cash-flow` | Cash flow movements |
+| GET  | `/api/v1/reports/cash-flow/summary` | Cash flow summary |
 | GET  | `/api/v1/reports/party-balances` | Who owes what |
 | GET  | `/api/v1/reports/currency-exposure` | Forex positions |
-| GET  | `/api/v1/reports/verify-balance` | **The truth check** |
+| **Master Data** | | |
 | POST | `/api/v1/accounts` | Create account |
 | POST | `/api/v1/parties` | Create party |
 | POST | `/api/v1/inventory` | Create inventory item |
+| GET  | `/api/v1/inventory/positions` | Current stock levels |
 
 ---
 
