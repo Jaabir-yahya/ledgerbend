@@ -1,0 +1,87 @@
+{
+  "simple_transfer": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "date": "2024-03-20",
+    "description": "Cash to M-PESA",
+    "entries": [
+      {
+        "account_id": "UUID_CASH_KES",
+        "credit_amount": 5000,
+        "currency_code": "KES",
+        "exchange_rate": 1
+      },
+      {
+        "account_id": "UUID_MPESA",
+        "debit_amount": 5000,
+        "currency_code": "KES",
+        "exchange_rate": 1
+      }
+    ]
+  },
+  "cross_currency_import": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "date": "2024-03-21",
+    "description": "Buy 100 items from China",
+    "entries": [
+      {
+        "account_id": "UUID_INVENTORY",
+        "debit_amount": 130000,
+        "currency_code": "KES",
+        "exchange_rate": 1,
+        "inventory_item_id": "UUID_ITEM",
+        "quantity": 100,
+        "party_id": "UUID_SUPPLIER",
+        "tags": ["china-import"]
+      },
+      {
+        "account_id": "UUID_BANK_USD",
+        "credit_amount": 1000,
+        "currency_code": "USD",
+        "exchange_rate": 130,
+        "party_id": "UUID_SUPPLIER"
+      }
+    ]
+  },
+  "on_behalf_payment": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "date": "2024-03-22",
+    "description": "Paid supplier on behalf of Partner X",
+    "entries": [
+      {
+        "account_id": "UUID_RECEIVABLE",
+        "debit_amount": 10000,
+        "currency_code": "KES",
+        "exchange_rate": 1,
+        "party_id": "UUID_PARTNER_X",
+        "memo": "Advanced payment for shipment Y"
+      },
+      {
+        "account_id": "UUID_BANK_KES",
+        "credit_amount": 10000,
+        "currency_code": "KES",
+        "exchange_rate": 1
+      }
+    ]
+  },
+  "revaluation_gold": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "date": "2024-03-23",
+    "description": "Gold revaluation - price up",
+    "entries": [
+      {
+        "account_id": "UUID_INVENTORY_GOLD",
+        "debit_amount": 50000,
+        "currency_code": "KES",
+        "exchange_rate": 1,
+        "memo": "Mark-to-market: Gold price up by 100/g",
+        "tags": ["revaluation"]
+      },
+      {
+        "account_id": "UUID_FOREX_GAIN",
+        "credit_amount": 50000,
+        "currency_code": "KES",
+        "exchange_rate": 1
+      }
+    ]
+  }
+}
